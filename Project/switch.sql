@@ -1,61 +1,101 @@
 
 DROP procedure IF EXISTS Switch;
+SET GLOBAL connect_timeout=28800;
+SET GLOBAL interactive_timeout=28800;
+SET GLOBAL wait_timeout=28800;
+SET GLOBAL mysqlx_connect_timeout=28800;
+SET GLOBAL mysqlx_read_timeout=28800;
+
 
 DELIMITER //
 
 CREATE PROCEDURE Switch ()
 BEGIN
 
-	DECLARE prev_total int(11) DEFAULT 0;
-    DECLARE prev_Biden int(11) DEFAULT 0;
-    DECLARE prev_Trump int(11) DEFAULT 0;
-    DECLARE prev_precinct varchar(100) DEFAULT "";
-    DECLARE prev_Timestamp datetime DEFAULT '2020-11-04';
-	DECLARE cur_total int(11) DEFAULT 0;
-    DECLARE cur_Biden int(11) DEFAULT 0;
-    DECLARE cur_Trump int(11) DEFAULT 0;
-    DECLARE cur_precinct varchar(100) DEFAULT "";
-    DECLARE cur_Timestamp datetime DEFAULT '2020-11-04';
-    DECLARE SOD int(1) DEFAULT 1;
+    DECLARE mPrecinct varchar(100) DEFAULT '';
+    DECLARE mTimestamp datetime DEFAULT NULL;
+    DECLARE mCurrentWinner varchar(5) DEFAULT '';
+    DECLARE mCurrentLoser varchar(5) DEFAULT '';
+    DECLARE mPrecinctWinner varchar(5) DEFAULT '';
+    DECLARE mPrevPrecinct varchar(100) DEFAULT '';
     DECLARE EOD int(1) DEFAULT 0;
 
-	DECLARE vote_cursor CURSOR FOR
-    SELECT totalvotes, Biden, Trump, precinct, Timestamp
+	DECLARE win_cursor CURSOR FOR
+    SELECT precinct, Timestamp,
+        CASE
+            WHEN Trump > Biden THEN "Trump"
+            WHEN Biden > Trump THEN "Biden"
+            ELSE "Tie"
+        END winner
     FROM Penna
     ORDER BY precinct, Timestamp;
     
     DECLARE CONTINUE HANDLER
     FOR NOT FOUND SET EOD = 1;
+
+    CREATE TEMPORARY TABLE IF NOT EXISTS switchPenna (
+        precinct varchar(100) DEFAULT NULL,
+        Timestamp datetime DEFAULT NULL,
+        fromCandidate varchar(5) DEFAULT NULL,
+        toCandidate varchar(5) DEFAULT NULL
+    );
     
-    OPEN vote_cursor;
+    OPEN win_cursor;
     
-    get_cur_votes: LOOP
-		IF SOD = 0 THEN
-			SET prev_total = cur_total;
-            SET prev_Biden = cur_Biden;
-            SET prev_Trump = cur_Trump;
-            SET prev_precinct = cur_precinct;
-            SET prev_Timestamp = cur_Timestamp;
+    get_new_winner: LOOP
+        
+		FETCH win_cursor
+        INTO mPrecinct, mTimestamp, mCurrentWinner;
+
+        IF mCurrentWinner = "Trump" THEN
+            SET mCurrentLoser = "Biden";
+        ELSE
+            SET mCurrentLoser = "Trump";
+        END IF;
+
+		IF mPrecinct != mPrevPrecinct THEN
+			SET mPrecinctWinner = (
+				SELECT
+					CASE
+						WHEN Trump > Biden THEN "Trump"
+						WHEN Biden > Trump THEN "Biden"
+						ELSE "Tie"
+					END winner
+				FROM Penna
+				WHERE precinct = mPrecinct
+				ORDER BY Timestamp DESC
+				LIMIT 1
+			);
+		END IF;
+
+        IF (mCurrentWinner NOT IN (
+            SELECT
+                CASE
+                    WHEN Trump > Biden THEN "Trump"
+                    WHEN Biden > Trump THEN "Biden"
+                    ELSE "Tie"
+                END winner
+            FROM Penna
+            WHERE precinct = mPrecinct
+            AND Timestamp >= mTimestamp-1
+            AND Timestamp < mTimestamp
+        )
+        AND mCurrentWinner = mPrecinctWinner)
+        THEN
+            INSERT INTO switchPenna (precinct, Timestamp, fromCandidate, toCandidate)
+                VALUES (mPrecinct, mTimestamp, mCurrentLoser, mCurrentWinner);
         END IF;
         
-		FETCH vote_cursor
-		INTO cur_total, cur_Biden, cur_Trump, cur_precinct, cur_Timestamp;
-			
-		SELECT  cur_precinct AS precinct,
-				cur_Timestamp AS Timestamp,
-				cur_total - prev_total AS newvotes,
-				cur_Biden - prev_Biden AS new_Biden,
-				cur_Trump - prev_Trump AS new_Trump
-				
-		WHERE cur_precinct = prev_precinct;
-        
-        SET SOD = 0;
         IF EOD = 1 THEN
-			LEAVE get_cur_votes;
+			LEAVE get_new_winner;
 		END IF;
-    END LOOP get_cur_votes;
+        
+        SET mPrevPrecinct = mPrecinct;
+    END LOOP get_new_winner;
     
-    CLOSE vote_cursor;
+    CLOSE win_cursor;
+
+    SELECT * FROM switchPenna;
     
 END //
 
