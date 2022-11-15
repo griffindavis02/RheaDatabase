@@ -69,7 +69,6 @@ BEGIN
 
     SELECT * FROM newPenna
     ORDER BY precinct, Timestamp;
-    -- DROP TABLE newPenna;
     
 END //
 

@@ -1,11 +1,5 @@
 
 DROP procedure IF EXISTS Switch;
-SET GLOBAL connect_timeout=28800;
-SET GLOBAL interactive_timeout=28800;
-SET GLOBAL wait_timeout=28800;
-SET GLOBAL mysqlx_connect_timeout=28800;
-SET GLOBAL mysqlx_read_timeout=28800;
-
 
 DELIMITER //
 
@@ -68,7 +62,8 @@ BEGIN
 			);
 		END IF;
 
-        IF (mCurrentWinner NOT IN (
+        IF (NOT EXISTS(SELECT * FROM switchPenna WHERE precinct = mPrecinct)
+        AND mCurrentWinner NOT IN (
             SELECT
                 CASE
                     WHEN Trump > Biden THEN "Trump"
@@ -77,7 +72,7 @@ BEGIN
                 END winner
             FROM Penna
             WHERE precinct = mPrecinct
-            AND Timestamp >= mTimestamp-1
+            AND Timestamp >= mTimestamp - INTERVAL 1 DAY
             AND Timestamp < mTimestamp
         )
         AND mCurrentWinner = mPrecinctWinner)
